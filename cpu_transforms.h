@@ -2,4 +2,4 @@
 
 #include <opencv2/opencv.hpp>
 
-cv::Mat performCPUTransforms(const cv::Mat &inputFrame);
+cv::Mat applyCPUPencilFilter(const cv::Mat &inputFrame, int kernelRadius);

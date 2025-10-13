@@ -20,6 +20,12 @@ enum BackendMode
     GPU = 1
 };
 
+enum ImageFilter
+{
+    NONE = 0,
+    PENCIL = 1
+};
+
 void saveImage(const char *filename, int width, int height)
 {
 
@@ -50,8 +56,32 @@ void saveImage(const char *filename, int width, int height)
 int main()
 {
     BackendMode backend = CPU;
+    ImageFilter filter = NONE;
     int screenWidth = 0;
     int screenHeight = 0;
+
+    int pencilKernelRadius = 21;
+    float pencilKernelWeights[pencilKernelRadius * pencilKernelRadius];
+    float sigma = pencilKernelRadius / 3.0;
+
+    float sum = 0.0;
+    for (int y = -pencilKernelRadius / 2; y <= pencilKernelRadius / 2; y++)
+    {
+        for (int x = -pencilKernelRadius / 2; x <= pencilKernelRadius / 2; x++)
+        {
+            float weight = std::exp(-(x * x + y * y) / (2 * sigma * sigma));
+            pencilKernelWeights[(y + pencilKernelRadius / 2) * pencilKernelRadius + (x + pencilKernelRadius / 2)] = weight;
+            sum += weight;
+        }
+    }
+    for (int y = 0; y < pencilKernelRadius; y++)
+    {
+        for (int x = 0; x < pencilKernelRadius; x++)
+        {
+            pencilKernelWeights[y * pencilKernelRadius + x] /= sum;
+        }
+    }
+
 
     float avgFPS = 0.0f;
     const float timeWindow = 5.0f;
@@ -164,7 +194,12 @@ int main()
 
         if (backend == CPU)
         {
-            frame = performCPUTransforms(frame);
+            if (filter == NONE){
+                // do nothing
+            }
+            else if (filter == PENCIL){
+                frame = applyCPUPencilFilter(frame, pencilKernelRadius);
+            }
         }
 
         // update texture
@@ -179,7 +214,14 @@ int main()
         }
         else
         {
-            glUseProgram(pixelateShaderProgram);
+            if (filter == NONE){
+                glUseProgram(defaultShaderProgram);
+            }
+            else if (filter == PENCIL){
+                glUniform1i(glGetUniformLocation(pencilShaderProgram, "kernelRadius"), pencilKernelRadius);
+                glUniform1fv(glGetUniformLocation(pencilShaderProgram, "weights"), pencilKernelRadius * pencilKernelRadius, pencilKernelWeights);
+                glUseProgram(pencilShaderProgram);
+            }
         }
 
         // render quad
@@ -204,6 +246,20 @@ int main()
             if (ImGui::Selectable("GPU", false))
             {
                 backend = BackendMode::GPU;
+            }
+            ImGui::EndCombo();
+        }
+
+        //Filter dropdown
+        if (ImGui::BeginCombo("Image Filter", "Image Filter"))
+        {
+            if (ImGui::Selectable("None", false))
+            {
+                filter = ImageFilter::NONE;
+            }
+            if (ImGui::Selectable("Pencil", false))
+            {
+                filter = ImageFilter::PENCIL;
             }
             ImGui::EndCombo();
         }

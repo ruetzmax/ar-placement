@@ -1,11 +1,13 @@
 #include <opencv2/opencv.hpp>
 
-cv::Mat performCPUTransforms(const cv::Mat &inputFrame)
+cv::Mat applyCPUPencilFilter(const cv::Mat &inputFrame, int kernelRadius)
 {
-    cv::Mat outputFrame;
+    cv::Mat outputFrame, grayScale;
+    cv::cvtColor(inputFrame, grayScale, cv::COLOR_BGR2GRAY);
+    outputFrame = 255 - grayScale;
+    cv::GaussianBlur(outputFrame, outputFrame, cv::Size(kernelRadius, kernelRadius), 0);
+    outputFrame = 255 - outputFrame;
+    cv::divide(grayScale, outputFrame, outputFrame, 256.0);
 
-    // tint green
-    cv::Mat greenTint(inputFrame.size(), inputFrame.type(), cv::Scalar(0, 50, 0));
-    cv::addWeighted(inputFrame, 0.7, greenTint, 0.3, 0.0, outputFrame);
     return outputFrame;
 }

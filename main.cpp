@@ -23,7 +23,8 @@ enum BackendMode
 enum ImageFilter
 {
     NONE = 0,
-    PENCIL = 1
+    PENCIL = 1,
+    RETRO = 2,
 };
 
 void saveImage(const char *filename, int width, int height)
@@ -82,6 +83,9 @@ int main()
         }
     }
 
+    int pixelBlockSize = 16;
+    int pixelColorDepth = 4;
+
 
     float avgFPS = 0.0f;
     const float timeWindow = 5.0f;
@@ -109,7 +113,7 @@ int main()
     // -- Setup Window and OpenGL --
     if (!glfwInit())
         return -1;
-    GLFWwindow *window = glfwCreateWindow(screenWidth, screenHeight, " Video Quad", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(screenWidth, screenHeight, "VC2", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
@@ -200,6 +204,9 @@ int main()
             else if (filter == PENCIL){
                 frame = applyCPUPencilFilter(frame, pencilKernelRadius);
             }
+            else if (filter == RETRO){
+                frame = applyCPURetroFilter(frame, pixelBlockSize, pixelColorDepth);
+            }
         }
 
         // update texture
@@ -221,6 +228,11 @@ int main()
                 glUniform1i(glGetUniformLocation(pencilShaderProgram, "kernelRadius"), pencilKernelRadius);
                 glUniform1fv(glGetUniformLocation(pencilShaderProgram, "weights"), pencilKernelRadius * pencilKernelRadius, pencilKernelWeights);
                 glUseProgram(pencilShaderProgram);
+            }
+            else if (filter == RETRO){
+                glUniform1i(glGetUniformLocation(retroShaderProgram, "blockPixelSize"), pixelBlockSize);
+                glUniform1i(glGetUniformLocation(retroShaderProgram, "colorDepth"), pixelColorDepth);
+                glUseProgram(retroShaderProgram);
             }
         }
 
@@ -260,6 +272,10 @@ int main()
             if (ImGui::Selectable("Pencil", false))
             {
                 filter = ImageFilter::PENCIL;
+            }
+            if (ImGui::Selectable("Retro", false))
+            {
+                filter = ImageFilter::RETRO;
             }
             ImGui::EndCombo();
         }

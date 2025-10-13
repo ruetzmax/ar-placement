@@ -1,4 +1,0 @@
-/home/max/Documents/VisualComputing/exercises/2/vc2/build/CMakeFiles/imgui_static.dir
-/home/max/Documents/VisualComputing/exercises/2/vc2/build/CMakeFiles/OpenCV_Project.dir
-/home/max/Documents/VisualComputing/exercises/2/vc2/build/CMakeFiles/edit_cache.dir
-/home/max/Documents/VisualComputing/exercises/2/vc2/build/CMakeFiles/rebuild_cache.dir

@@ -4,7 +4,7 @@
 #include <GLFW/glfw3.h>
 
 std::string defaultVertexShader = R"(
-# version 330 core
+#version 330 core
 layout ( location = 0) in vec2 aPos ;
 layout ( location = 1) in vec2 aTexCoord ;
 out vec2 TexCoord ;
@@ -15,7 +15,7 @@ TexCoord = aTexCoord ;
 )";
 
 std::string defaultFragmentShader = R"(
-# version 330 core
+#version 330 core
 out vec4 FragColor ;
 in vec2 TexCoord ;
 uniform sampler2D texture1 ;
@@ -25,7 +25,7 @@ FragColor = texture ( texture1 , vec2(TexCoord.x, TexCoord.y) ) ;
 )";
 
 std::string pencilFragmentShader = R"(
-# version 330 core
+#version 330 core
 out vec4 FragColor ;
 in vec2 TexCoord ;
 uniform sampler2D texture1 ;
@@ -65,6 +65,44 @@ void main () {
 
     FragColor = vec4(outputColor, outputColor, outputColor, 1.0);
 }
+)";
+
+std::string retroFragmentShader = R"(
+    #version 330 core
+    out vec4 FragColor ;
+    in vec2 TexCoord ;
+    uniform sampler2D texture1 ;
+    uniform int blockPixelSize ;
+    uniform int colorDepth ;
+
+    void main () {
+        ivec2 texSize = textureSize(texture1, 0);
+
+        vec2 tex_offset = 1.0 / vec2(texSize);
+        vec2 blockSize = vec2(float(blockPixelSize) / float(texSize.x), float(blockPixelSize) / float(texSize.y));
+
+        // sample block average
+        ivec2 currentBlockIndex = ivec2(floor(TexCoord.x / blockSize.x), floor(TexCoord.y / blockSize.y));
+        vec2 currentBlockStart = currentBlockIndex * blockSize;
+
+        vec3 avgCol = vec3(0.0);
+        for(int y = 0; y < blockPixelSize; y++){
+            for(int x = 0; x < blockPixelSize; x++){
+                vec2 offset = vec2(float(x), float(y)) * tex_offset;
+                vec2 sampleCoord = clamp(currentBlockStart + offset, vec2(0.0), vec2(1.0));
+                avgCol += texture(texture1, sampleCoord).rgb;
+            }
+        }
+        avgCol /= float(blockPixelSize * blockPixelSize);
+
+        // reduce color depth
+        int levels = 1 << colorDepth;
+        float step = 1.0 / float(levels);
+        avgCol = floor(avgCol / step) * step;
+
+        FragColor = vec4(avgCol, 1.0);
+    }
+
 )";
 
 unsigned int compileShader(unsigned int type, const std::string& source)
@@ -111,6 +149,7 @@ unsigned int createShaderProgram(const std::string& vertexShader, const std::str
 
 unsigned int defaultShaderProgram = 0;
 unsigned int pencilShaderProgram = 0;
+unsigned int retroShaderProgram = 0;
 
 void initShaderPrograms()
 {
@@ -119,6 +158,8 @@ void initShaderPrograms()
 
     defaultShaderProgram = createShaderProgram(defaultVertexShader, defaultFragmentShader);
     pencilShaderProgram = createShaderProgram(defaultVertexShader, pencilFragmentShader);
+    retroShaderProgram = createShaderProgram(defaultVertexShader, retroFragmentShader);
+
 }
 
 void cleanupShaderPrograms()
@@ -132,6 +173,11 @@ void cleanupShaderPrograms()
     {
         glDeleteProgram(pencilShaderProgram);
         pencilShaderProgram = 0;
+    }
+    if (retroShaderProgram != 0)
+    {
+        glDeleteProgram(retroShaderProgram);
+        retroShaderProgram = 0;
     }
 }
     

@@ -1,4 +1,5 @@
 #include <iostream>
+#include <vector>
 #include <opencv2/opencv.hpp>
 
 #include <GL/glew.h>
@@ -9,6 +10,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <chrono>
 
 using namespace cv;
 
@@ -18,11 +20,44 @@ enum BackendMode
     GPU = 1
 };
 
+void saveImage(const char *filename, int width, int height)
+{
+
+    std::cout << "Saving image to " << filename << " (" << width << "x" << height << ")" << std::endl;
+    std::vector<unsigned char> pixels(width * height * 3);
+
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadBuffer(GL_BACK);
+    glFinish();
+    glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+
+    cv::Mat img(height, width, CV_8UC3, pixels.data());
+
+    cv::flip(img, img, 0);
+    cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
+
+    try
+    {
+        cv::imwrite(filename, img);
+        std::cout << "Image saved successfully!" << std::endl;
+    }
+    catch (const cv::Exception &e)
+    {
+        std::cerr << "OpenCV exception: " << e.what() << std::endl;
+    }
+}
+
 int main()
 {
     BackendMode backend = CPU;
     int screenWidth = 0;
     int screenHeight = 0;
+
+    float avgFPS = 0.0f;
+    const float timeWindow = 5.0f;
+    std::deque<std::chrono::time_point<std::chrono::high_resolution_clock>> frameTimes;
+
+    std::string imageSavePath = std::string(__FILE__).substr(0, std::string(__FILE__).find_last_of("/\\") + 1) + "images/";
 
     // -- Setup Video Capture --
     VideoCapture cap(0);
@@ -103,6 +138,18 @@ int main()
 
     while (!glfwWindowShouldClose(window))
     {
+        // time tracking
+        auto now = std::chrono::high_resolution_clock::now();
+        frameTimes.push_back(now);
+
+        auto cutoff = now - std::chrono::duration<float>(timeWindow);
+        while (!frameTimes.empty() && frameTimes.front() < cutoff)
+            frameTimes.pop_front();
+
+        float elapsed = std::chrono::duration<float>(frameTimes.back() - frameTimes.front()).count();
+        if (elapsed > 0.0f && frameTimes.size() > 1)
+            avgFPS = (frameTimes.size() - 1) / elapsed;
+
         glfwMakeContextCurrent(window);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -113,6 +160,7 @@ int main()
             break;
 
         cv::resize(frame, frame, cv::Size(screenWidth, screenHeight));
+        cv::flip(frame, frame, 0);
 
         if (backend == CPU)
         {
@@ -143,6 +191,7 @@ int main()
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::Begin("Controls");
 
         // Mode dropdown
@@ -162,6 +211,16 @@ int main()
         // Screen dimensions
         ImGui::InputInt("Screen Width", &screenWidth);
         ImGui::InputInt("Screen Height", &screenHeight);
+
+        // FPS
+        ImGui::Text("Average FPS (%.1fs): %.2f", timeWindow, avgFPS);
+
+        // Save image button
+        if (ImGui::Button("Save Image"))
+        {
+            std::string filename = imageSavePath + "frame_" + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count()) + ".png";
+            saveImage(filename.c_str(), screenWidth, screenHeight);
+        }
 
         ImGui::End();
         ImGui::Render();

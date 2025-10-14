@@ -98,7 +98,7 @@ int main()
 
     float fps = 0.0f;
     std::string avgFPS = "Not tracked";
-    const float timeWindowSeconds = 5.0f;
+    float timeWindowSeconds = 5.0f;
     std::chrono::time_point<std::chrono::high_resolution_clock> lastFrameTime;
     bool isTrackingFPS = false;
     int frameCount = 0;
@@ -330,6 +330,7 @@ int main()
         // FPS
         ImGui::Text("Current FPS: %.1f", fps);
         ImGui::Text("Average FPS (%.1fs): %s", timeWindowSeconds, avgFPS.c_str());
+        ImGui::InputFloat("Window Size (s)", &timeWindowSeconds);
         if (ImGui::Button("Track FPS")){
             if (!isTrackingFPS) {
                 isTrackingFPS = true;

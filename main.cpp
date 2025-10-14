@@ -96,9 +96,13 @@ int main()
 
     bool isInteractive = false;
 
-    float avgFPS = 0.0f;
-    const float timeWindow = 5.0f;
-    std::deque<std::chrono::time_point<std::chrono::high_resolution_clock>> frameTimes;
+    float fps = 0.0f;
+    std::string avgFPS = "Not tracked";
+    const float timeWindowSeconds = 5.0f;
+    std::chrono::time_point<std::chrono::high_resolution_clock> lastFrameTime;
+    bool isTrackingFPS = false;
+    int frameCount = 0;
+    std::chrono::time_point<std::chrono::high_resolution_clock> trackingStartTime;
 
     std::string imageSavePath = std::string(__FILE__).substr(0, std::string(__FILE__).find_last_of("/\\") + 1) + "images/";
 
@@ -186,15 +190,22 @@ int main()
     {
         // time tracking
         auto now = std::chrono::high_resolution_clock::now();
-        frameTimes.push_back(now);
+        float deltaTime = std::chrono::duration<float>(now - lastFrameTime).count();
+        fps = 1.0f / deltaTime;
 
-        auto cutoff = now - std::chrono::duration<float>(timeWindow);
-        while (!frameTimes.empty() && frameTimes.front() < cutoff)
-            frameTimes.pop_front();
-
-        float elapsed = std::chrono::duration<float>(frameTimes.back() - frameTimes.front()).count();
-        if (elapsed > 0.0f && frameTimes.size() > 1)
-            avgFPS = (frameTimes.size() - 1) / elapsed;
+        lastFrameTime = now;
+        
+        if (isTrackingFPS) {
+            frameCount++;
+            float elapsed = std::chrono::duration<float>(now - trackingStartTime).count();
+            if (elapsed >= timeWindowSeconds) {
+                float averageFPS = frameCount / elapsed;
+                avgFPS = std::to_string(averageFPS).substr(0, 5); 
+                isTrackingFPS = false;
+                frameCount = 0;
+            }
+        }
+        
 
         glfwMakeContextCurrent(window);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -317,8 +328,17 @@ int main()
         ImGui::Checkbox("Interactive Mode", &isInteractive);
 
         // FPS
-        ImGui::Text("Average FPS (%.1fs): %.2f", timeWindow, avgFPS);
-
+        ImGui::Text("Current FPS: %.1f", fps);
+        ImGui::Text("Average FPS (%.1fs): %s", timeWindowSeconds, avgFPS.c_str());
+        if (ImGui::Button("Track FPS")){
+            if (!isTrackingFPS) {
+                isTrackingFPS = true;
+                frameCount = 0;
+                trackingStartTime = std::chrono::high_resolution_clock::now();
+                avgFPS = "Tracking...";
+            }
+        }        
+        
         // Save image button
         if (ImGui::Button("Save Image"))
         {

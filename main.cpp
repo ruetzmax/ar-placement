@@ -86,12 +86,24 @@ int main()
     int pixelBlockSize = 16;
     int pixelColorDepth = 4;
 
+    float rotX = 0.0f;
+    float rotY = 0.0f;
+
+    float posX = 0.0f;
+    float posY = 0.0f;
+
+    static float scale = 1.0f;
+
+    bool isInteractive = false;
 
     float avgFPS = 0.0f;
     const float timeWindow = 5.0f;
     std::deque<std::chrono::time_point<std::chrono::high_resolution_clock>> frameTimes;
 
     std::string imageSavePath = std::string(__FILE__).substr(0, std::string(__FILE__).find_last_of("/\\") + 1) + "images/";
+
+    bool rightMouseDown = false, leftMouseDown = false;
+    double lastMouseX = 0.0, lastMouseY = 0.0;
 
     // -- Setup Video Capture --
     VideoCapture cap(0);
@@ -207,7 +219,13 @@ int main()
             else if (filter == RETRO){
                 frame = applyCPURetroFilter(frame, pixelBlockSize, pixelColorDepth);
             }
+
+            if (isInteractive)
+            {
+                frame = applyCPUTransformations(frame, rotX, rotY, posX, posY, scale);
+            }
         }
+
 
         // update texture
         glBindTexture(GL_TEXTURE_2D, texture);
@@ -215,26 +233,37 @@ int main()
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, frame.cols, frame.rows,
                      0, GL_RGB, GL_UNSIGNED_BYTE, frame.data);
 
+        unsigned int shaderProgram;
         if (backend == CPU)
         {
-            glUseProgram(defaultShaderProgram);
+            shaderProgram = getShaderProgram(0, false);
         }
         else
         {
             if (filter == NONE){
-                glUseProgram(defaultShaderProgram);
+                shaderProgram = getShaderProgram(0, isInteractive);
             }
             else if (filter == PENCIL){
-                glUniform1i(glGetUniformLocation(pencilShaderProgram, "kernelRadius"), pencilKernelRadius);
-                glUniform1fv(glGetUniformLocation(pencilShaderProgram, "weights"), pencilKernelRadius * pencilKernelRadius, pencilKernelWeights);
-                glUseProgram(pencilShaderProgram);
+                shaderProgram = getShaderProgram(1, isInteractive);
+                glUniform1i(glGetUniformLocation(shaderProgram, "kernelRadius"), pencilKernelRadius);
+                glUniform1fv(glGetUniformLocation(shaderProgram, "weights"), pencilKernelRadius * pencilKernelRadius, pencilKernelWeights);
             }
             else if (filter == RETRO){
-                glUniform1i(glGetUniformLocation(retroShaderProgram, "blockPixelSize"), pixelBlockSize);
-                glUniform1i(glGetUniformLocation(retroShaderProgram, "colorDepth"), pixelColorDepth);
-                glUseProgram(retroShaderProgram);
+                shaderProgram = getShaderProgram(2, isInteractive);
+                glUniform1i(glGetUniformLocation(shaderProgram, "blockPixelSize"), pixelBlockSize);
+                glUniform1i(glGetUniformLocation(shaderProgram, "colorDepth"), pixelColorDepth);
+            }
+
+            if (isInteractive)
+            {
+                glUniform1f(glGetUniformLocation(shaderProgram, "rotX"), rotX);
+                glUniform1f(glGetUniformLocation(shaderProgram, "rotY"), rotY);
+                glUniform1f(glGetUniformLocation(shaderProgram, "posX"), posX / frame.cols);
+                glUniform1f(glGetUniformLocation(shaderProgram, "posY"), posY / frame.rows);
+                glUniform1f(glGetUniformLocation(shaderProgram, "scale"), scale);
             }
         }
+        glUseProgram(shaderProgram);
 
         // render quad
         glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -284,6 +313,9 @@ int main()
         ImGui::InputInt("Screen Width", &screenWidth);
         ImGui::InputInt("Screen Height", &screenHeight);
 
+        // Interactive toggle
+        ImGui::Checkbox("Interactive Mode", &isInteractive);
+
         // FPS
         ImGui::Text("Average FPS (%.1fs): %.2f", timeWindow, avgFPS);
 
@@ -299,6 +331,55 @@ int main()
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
         glfwSwapBuffers(window);
+
+        // Input handling
+        if (isInteractive){
+            double mouseX, mouseY;
+            glfwGetCursorPos(window, &mouseX, &mouseY);
+            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+                rightMouseDown = true;
+            }
+            else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_RELEASE) {
+                rightMouseDown = false;
+            }
+
+            if(glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+                leftMouseDown = true;
+            }
+            else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_RELEASE) {
+                leftMouseDown = false;
+            }
+
+            if (rightMouseDown) {
+                float deltaX = static_cast<float>(mouseX - lastMouseX);
+                float deltaY = static_cast<float>(mouseY - lastMouseY);
+                rotY += deltaX;
+                rotX += deltaY;
+            }
+
+            if (leftMouseDown) {
+                float deltaX = static_cast<float>(mouseX - lastMouseX);
+                float deltaY = static_cast<float>(mouseY - lastMouseY);
+                posX += deltaX;
+                posY -= deltaY;
+            }
+
+            // Define scale as static/global so it can be accessed in the callback
+            auto scroll_callback = [](GLFWwindow *window, double xoffset, double yoffset) {
+                if (scale)
+                {
+                    if (yoffset > 0)
+                        scale *= 1.1f;
+                    else
+                        scale /= 1.1f;
+                }
+            };
+            glfwSetScrollCallback(window, scroll_callback);
+
+            lastMouseX = mouseX;
+            lastMouseY = mouseY;
+        }
+
         cv::waitKey(40);
     }
     cap.release();

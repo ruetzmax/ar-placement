@@ -79,7 +79,7 @@ out vec4 FragColor ;
 in vec2 TexCoord ;
 uniform sampler2D texture1 ;
 
-uniform int kernelRadius;
+uniform int kernelSize;
 uniform float weights[1000];
 
 void main () {
@@ -93,15 +93,15 @@ void main () {
     float blurredGrayScale = 0.0;
     float weightSum = 0.0;
 
-    for(int y = -kernelRadius / 2; y <= kernelRadius / 2; y++)
+    for(int y = -kernelSize / 2; y <= kernelSize / 2; y++)
     {
-        for(int x = -kernelRadius / 2; x <= kernelRadius / 2; x++)
+        for(int x = -kernelSize / 2; x <= kernelSize / 2; x++)
         {
             vec2 offset = vec2(float(x), float(y)) * tex_offset;
             vec3 color = texture(texture1, TexCoord + offset).rgb;
             float sampleGray = dot(color, vec3(0.299, 0.587, 0.114));
             sampleGray = 1.0 - sampleGray;
-            float weight = weights[(y + kernelRadius / 2) * kernelRadius + (x + kernelRadius / 2)];
+            float weight = weights[(y + kernelSize / 2) * kernelSize + (x + kernelSize / 2)];
             blurredGrayScale += sampleGray * weight;
             weightSum += weight;
         }
@@ -130,19 +130,11 @@ std::string retroFragmentShader = R"(
         vec2 tex_offset = 1.0 / vec2(texSize);
         vec2 blockSize = vec2(float(blockPixelSize) / float(texSize.x), float(blockPixelSize) / float(texSize.y));
 
-        // sample block average
+        // sample top-left pixel of block
         ivec2 currentBlockIndex = ivec2(floor(TexCoord.x / blockSize.x), floor(TexCoord.y / blockSize.y));
         vec2 currentBlockStart = currentBlockIndex * blockSize;
 
-        vec3 avgCol = vec3(0.0);
-        for(int y = 0; y < blockPixelSize; y++){
-            for(int x = 0; x < blockPixelSize; x++){
-                vec2 offset = vec2(float(x), float(y)) * tex_offset;
-                vec2 sampleCoord = clamp(currentBlockStart + offset, vec2(0.0), vec2(1.0));
-                avgCol += texture(texture1, sampleCoord).rgb;
-            }
-        }
-        avgCol /= float(blockPixelSize * blockPixelSize);
+        vec3 avgCol = texture(texture1, currentBlockStart).rgb;
 
         // reduce color depth
         int levels = 1 << colorDepth;

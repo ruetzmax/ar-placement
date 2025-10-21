@@ -61,29 +61,29 @@ int main()
     int screenWidth = 0;
     int screenHeight = 0;
 
-    int pencilKernelRadius = 21;
-    float pencilKernelWeights[pencilKernelRadius * pencilKernelRadius];
-    float sigma = pencilKernelRadius / 3.0;
+    int pencilKernelSize = 21;
+    float pencilKernelWeights[pencilKernelSize * pencilKernelSize];
+    float sigma = pencilKernelSize / 3.0;
 
     float sum = 0.0;
-    for (int y = -pencilKernelRadius / 2; y <= pencilKernelRadius / 2; y++)
+    for (int y = -pencilKernelSize / 2; y <= pencilKernelSize / 2; y++)
     {
-        for (int x = -pencilKernelRadius / 2; x <= pencilKernelRadius / 2; x++)
+        for (int x = -pencilKernelSize / 2; x <= pencilKernelSize / 2; x++)
         {
             float weight = std::exp(-(x * x + y * y) / (2 * sigma * sigma));
-            pencilKernelWeights[(y + pencilKernelRadius / 2) * pencilKernelRadius + (x + pencilKernelRadius / 2)] = weight;
+            pencilKernelWeights[(y + pencilKernelSize / 2) * pencilKernelSize + (x + pencilKernelSize / 2)] = weight;
             sum += weight;
         }
     }
-    for (int y = 0; y < pencilKernelRadius; y++)
+    for (int y = 0; y < pencilKernelSize; y++)
     {
-        for (int x = 0; x < pencilKernelRadius; x++)
+        for (int x = 0; x < pencilKernelSize; x++)
         {
-            pencilKernelWeights[y * pencilKernelRadius + x] /= sum;
+            pencilKernelWeights[y * pencilKernelSize + x] /= sum;
         }
     }
 
-    int pixelBlockSize = 16;
+    int pixelBlockSize = 21;
     int pixelColorDepth = 4;
 
     float rotX = 0.0f;
@@ -225,7 +225,7 @@ int main()
                 // do nothing
             }
             else if (filter == PENCIL){
-                frame = applyCPUPencilFilter(frame, pencilKernelRadius);
+                frame = applyCPUPencilFilter(frame, pencilKernelSize);
             }
             else if (filter == RETRO){
                 frame = applyCPURetroFilter(frame, pixelBlockSize, pixelColorDepth);
@@ -256,8 +256,8 @@ int main()
             }
             else if (filter == PENCIL){
                 shaderProgram = getShaderProgram(1, isInteractive);
-                glUniform1i(glGetUniformLocation(shaderProgram, "kernelRadius"), pencilKernelRadius);
-                glUniform1fv(glGetUniformLocation(shaderProgram, "weights"), pencilKernelRadius * pencilKernelRadius, pencilKernelWeights);
+                glUniform1i(glGetUniformLocation(shaderProgram, "kernelSize"), pencilKernelSize);
+                glUniform1fv(glGetUniformLocation(shaderProgram, "weights"), pencilKernelSize * pencilKernelSize, pencilKernelWeights);
             }
             else if (filter == RETRO){
                 shaderProgram = getShaderProgram(2, isInteractive);

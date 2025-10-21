@@ -1,11 +1,11 @@
 #include <opencv2/opencv.hpp>
 
-cv::Mat applyCPUPencilFilter(const cv::Mat inputFrame, int kernelRadius)
+cv::Mat applyCPUPencilFilter(const cv::Mat inputFrame, int kernelSize)
 {
     cv::Mat outputFrame, grayScale;
     cv::cvtColor(inputFrame, grayScale, cv::COLOR_BGR2GRAY);
     outputFrame = 255 - grayScale;
-    cv::GaussianBlur(outputFrame, outputFrame, cv::Size(kernelRadius, kernelRadius), 0);
+    cv::GaussianBlur(outputFrame, outputFrame, cv::Size(kernelSize, kernelSize), 0);
     outputFrame = 255 - outputFrame;
     cv::divide(grayScale, outputFrame, outputFrame, 256.0);
 
@@ -15,7 +15,7 @@ cv::Mat applyCPUPencilFilter(const cv::Mat inputFrame, int kernelRadius)
 cv::Mat applyCPURetroFilter(const cv::Mat inputFrame, int blockSize, int colorDepth)
 {
     // pixelate image
-    cv::Mat outputFrame = inputFrame.clone();
+    cv::Mat outputFrame = cv::Mat::zeros(inputFrame.size(), inputFrame.type());
     for (int y = 0; y < inputFrame.rows; y += blockSize)
     {
         for (int x = 0; x < inputFrame.cols; x += blockSize)
@@ -23,7 +23,7 @@ cv::Mat applyCPURetroFilter(const cv::Mat inputFrame, int blockSize, int colorDe
             cv::Rect rect(x, y, blockSize, blockSize);
             rect.width = std::min(rect.width, inputFrame.cols - x);
             rect.height = std::min(rect.height, inputFrame.rows - y);
-            cv::Scalar color = cv::mean(inputFrame(rect));
+            cv::Scalar color = inputFrame.at<cv::Vec3b>(y, x);
             outputFrame(rect).setTo(color);
         }
     }

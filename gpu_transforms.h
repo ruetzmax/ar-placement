@@ -5,6 +5,6 @@
 
 unsigned int compileShader(unsigned int type, const std::string& source);
 unsigned int createShaderProgram(const std::string& vertexShader, const std::string& fragmentShader);
-unsigned int getShaderProgram(int filter, bool isInteractive);
+unsigned int getShaderProgram();
 void initShaderPrograms();
 void cleanupShaderPrograms();

@@ -5,7 +5,6 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include "gpu_transforms.h"
-#include "cpu_transforms.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -14,18 +13,53 @@
 
 using namespace cv;
 
-enum BackendMode
+std::vector<cv::Mat> dummyProcessVideo(std::vector<cv::Mat> video)
 {
-    CPU = 0,
-    GPU = 1
-};
+    std::vector<cv::Mat> frames;
+    frames.reserve(video.size());
+    for (const auto &f : video)
+    {
+        if (f.empty())
+        {
+            frames.emplace_back();
+            continue;
+        }
+        cv::Mat gray, bgr;
+        cv::cvtColor(f, gray, cv::COLOR_BGR2GRAY);
+        cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
+        frames.push_back(bgr);
+    }
+    return frames;
+}
 
-enum ImageFilter
+std::vector<cv::Mat> readVideo(const char *filename, double &videoFPS)
 {
-    NONE = 0,
-    PENCIL = 1,
-    RETRO = 2,
-};
+    cv::VideoCapture cap(filename);
+    if (!cap.isOpened())
+    {
+        std::cerr << "Error: Could not open video file: " << filename << std::endl;
+        return {};
+    }
+
+    videoFPS = cap.get(cv::CAP_PROP_FPS);
+    if (videoFPS <= 0.0)
+        videoFPS = 30.0;
+
+    std::vector<cv::Mat> frames;
+    cv::Mat frame;
+
+    while (true)
+    {
+        bool ret = cap.read(frame);
+        if (!ret)
+            break;
+
+        frames.push_back(frame.clone());
+    }
+
+    cap.release();
+    return frames;
+}
 
 void saveImage(const char *filename, int width, int height)
 {
@@ -56,46 +90,6 @@ void saveImage(const char *filename, int width, int height)
 
 int main()
 {
-    BackendMode backend = CPU;
-    ImageFilter filter = NONE;
-    int screenWidth = 0;
-    int screenHeight = 0;
-
-    int pencilKernelSize = 21;
-    float pencilKernelWeights[pencilKernelSize * pencilKernelSize];
-    float sigma = pencilKernelSize / 3.0;
-
-    float sum = 0.0;
-    for (int y = -pencilKernelSize / 2; y <= pencilKernelSize / 2; y++)
-    {
-        for (int x = -pencilKernelSize / 2; x <= pencilKernelSize / 2; x++)
-        {
-            float weight = std::exp(-(x * x + y * y) / (2 * sigma * sigma));
-            pencilKernelWeights[(y + pencilKernelSize / 2) * pencilKernelSize + (x + pencilKernelSize / 2)] = weight;
-            sum += weight;
-        }
-    }
-    for (int y = 0; y < pencilKernelSize; y++)
-    {
-        for (int x = 0; x < pencilKernelSize; x++)
-        {
-            pencilKernelWeights[y * pencilKernelSize + x] /= sum;
-        }
-    }
-
-    int pixelBlockSize = 21;
-    int pixelColorDepth = 4;
-
-    float rotX = 0.0f;
-    float rotY = 0.0f;
-
-    float posX = 0.0f;
-    float posY = 0.0f;
-
-    static float scale = 1.0f;
-
-    bool isInteractive = false;
-
     float fps = 0.0f;
     std::string avgFPS = "Not tracked";
     float timeWindowSeconds = 5.0f;
@@ -105,31 +99,24 @@ int main()
     std::chrono::time_point<std::chrono::high_resolution_clock> trackingStartTime;
 
     std::string imageSavePath = std::string(__FILE__).substr(0, std::string(__FILE__).find_last_of("/\\") + 1) + "images/";
+    std::string videoPath = std::string(__FILE__).substr(0, std::string(__FILE__).find_last_of("/\\") + 1) + "videos/";
 
-    bool rightMouseDown = false, leftMouseDown = false;
-    double lastMouseX = 0.0, lastMouseY = 0.0;
+    int screenWidth, screenHeight;
 
-    // -- Setup Video Capture --
-    VideoCapture cap(0);
-    if (!cap.isOpened())
-        return -1;
+    double videoFPS;
+    std::vector<cv::Mat> unprocessedFrames = readVideo((videoPath + "vid.mp4").c_str(), videoFPS);
+    std::vector<cv::Mat> processedFrames = unprocessedFrames;
+    int currentFrameIndex = 0;
+    bool videoIsPlaying = false;
+    std::string processingTime = "Not tracked";
 
-    cv ::Mat frame;
-    cap >> frame;
-    if (frame.empty())
-    {
-        std::cerr << " Error : couldn ’t capture an initial frame from camera. Exiting.\n";
-        cap.release();
-        glfwTerminate();
-        return -1;
-    }
-    screenWidth = frame.cols;
-    screenHeight = frame.rows;
+    screenWidth = processedFrames[0].cols;
+    screenHeight = processedFrames[0].rows;
 
     // -- Setup Window and OpenGL --
     if (!glfwInit())
         return -1;
-    GLFWwindow *window = glfwCreateWindow(screenWidth, screenHeight, "VC2", NULL, NULL);
+    GLFWwindow *window = glfwCreateWindow(screenWidth, screenHeight, "AR Placement", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
@@ -194,49 +181,28 @@ int main()
         fps = 1.0f / deltaTime;
 
         lastFrameTime = now;
-        
-        if (isTrackingFPS) {
+
+        if (isTrackingFPS)
+        {
             frameCount++;
             float elapsed = std::chrono::duration<float>(now - trackingStartTime).count();
-            if (elapsed >= timeWindowSeconds) {
+            if (elapsed >= timeWindowSeconds)
+            {
                 float averageFPS = frameCount / elapsed;
-                avgFPS = std::to_string(averageFPS).substr(0, 5); 
+                avgFPS = std::to_string(averageFPS).substr(0, 5);
                 isTrackingFPS = false;
                 frameCount = 0;
             }
         }
-        
 
         glfwMakeContextCurrent(window);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Pull frame from video stream
-        Mat frame;
-        cap >> frame;
+        Mat frame = processedFrames[currentFrameIndex].clone();
         if (frame.empty())
             break;
 
-        cv::resize(frame, frame, cv::Size(screenWidth, screenHeight));
         cv::flip(frame, frame, 0);
-
-        if (backend == CPU)
-        {
-            if (filter == NONE){
-                // do nothing
-            }
-            else if (filter == PENCIL){
-                frame = applyCPUPencilFilter(frame, pencilKernelSize);
-            }
-            else if (filter == RETRO){
-                frame = applyCPURetroFilter(frame, pixelBlockSize, pixelColorDepth);
-            }
-
-            if (isInteractive)
-            {
-                frame = applyCPUTransformations(frame, rotX, rotY, posX, posY, scale);
-            }
-        }
-
 
         // update texture
         glBindTexture(GL_TEXTURE_2D, texture);
@@ -244,36 +210,8 @@ int main()
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, frame.cols, frame.rows,
                      0, GL_RGB, GL_UNSIGNED_BYTE, frame.data);
 
-        unsigned int shaderProgram;
-        if (backend == CPU)
-        {
-            shaderProgram = getShaderProgram(0, false);
-        }
-        else
-        {
-            if (filter == NONE){
-                shaderProgram = getShaderProgram(0, isInteractive);
-            }
-            else if (filter == PENCIL){
-                shaderProgram = getShaderProgram(1, isInteractive);
-                glUniform1i(glGetUniformLocation(shaderProgram, "kernelSize"), pencilKernelSize);
-                glUniform1fv(glGetUniformLocation(shaderProgram, "weights"), pencilKernelSize * pencilKernelSize, pencilKernelWeights);
-            }
-            else if (filter == RETRO){
-                shaderProgram = getShaderProgram(2, isInteractive);
-                glUniform1i(glGetUniformLocation(shaderProgram, "blockPixelSize"), pixelBlockSize);
-                glUniform1i(glGetUniformLocation(shaderProgram, "colorDepth"), pixelColorDepth);
-            }
+        unsigned int shaderProgram = getShaderProgram();
 
-            if (isInteractive)
-            {
-                glUniform1f(glGetUniformLocation(shaderProgram, "rotX"), rotX);
-                glUniform1f(glGetUniformLocation(shaderProgram, "rotY"), rotY);
-                glUniform1f(glGetUniformLocation(shaderProgram, "posX"), posX / frame.cols);
-                glUniform1f(glGetUniformLocation(shaderProgram, "posY"), posY / frame.rows);
-                glUniform1f(glGetUniformLocation(shaderProgram, "scale"), scale);
-            }
-        }
         glUseProgram(shaderProgram);
 
         // render quad
@@ -288,58 +226,45 @@ int main()
         ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::Begin("Controls");
 
-        // Mode dropdown
-        if (ImGui::BeginCombo("Backend Mode", "Backend Mode"))
+        // VIDEO CONTROLS
+        ImGui::SliderInt("Current Frame", &currentFrameIndex, 0, processedFrames.size() - 1);
+        if (ImGui::Button(videoIsPlaying ? "Pause Video" : "Play Video"))
         {
-            if (ImGui::Selectable("CPU", false))
-            {
-                backend = BackendMode::CPU;
-            }
-            if (ImGui::Selectable("GPU", false))
-            {
-                backend = BackendMode::GPU;
-            }
-            ImGui::EndCombo();
+            videoIsPlaying = !videoIsPlaying;
         }
-
-        //Filter dropdown
-        if (ImGui::BeginCombo("Image Filter", "Image Filter"))
+        if (ImGui::Button("Process Video"))
         {
-            if (ImGui::Selectable("None", false))
+            auto t0 = std::chrono::high_resolution_clock::now();
+            processedFrames = dummyProcessVideo(unprocessedFrames);
+            auto t1 = std::chrono::high_resolution_clock::now();
+            double elapsedMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            processingTime = std::to_string(elapsedMs) + " ms";
+
+            currentFrameIndex = 0;
+            if (!processedFrames.empty() && !processedFrames[0].empty())
             {
-                filter = ImageFilter::NONE;
+                screenWidth = processedFrames[0].cols;
+                screenHeight = processedFrames[0].rows;
+                glfwSetWindowSize(window, screenWidth, screenHeight);
             }
-            if (ImGui::Selectable("Pencil", false))
-            {
-                filter = ImageFilter::PENCIL;
-            }
-            if (ImGui::Selectable("Retro", false))
-            {
-                filter = ImageFilter::RETRO;
-            }
-            ImGui::EndCombo();
         }
-
-        // Screen dimensions
-        ImGui::InputInt("Screen Width", &screenWidth);
-        ImGui::InputInt("Screen Height", &screenHeight);
-
-        // Interactive toggle
-        ImGui::Checkbox("Interactive Mode", &isInteractive);
+        ImGui::Text("Processing Time: %s", processingTime.c_str());
 
         // FPS
         ImGui::Text("Current FPS: %.1f", fps);
         ImGui::Text("Average FPS (%.1fs): %s", timeWindowSeconds, avgFPS.c_str());
         ImGui::InputFloat("Window Size (s)", &timeWindowSeconds);
-        if (ImGui::Button("Track FPS")){
-            if (!isTrackingFPS) {
+        if (ImGui::Button("Track FPS"))
+        {
+            if (!isTrackingFPS)
+            {
                 isTrackingFPS = true;
                 frameCount = 0;
                 trackingStartTime = std::chrono::high_resolution_clock::now();
                 avgFPS = "Tracking...";
             }
-        }        
-        
+        }
+
         // Save image button
         if (ImGui::Button("Save Image"))
         {
@@ -353,57 +278,30 @@ int main()
 
         glfwSwapBuffers(window);
 
-        // Input handling
-        if (isInteractive){
-            double mouseX, mouseY;
-            glfwGetCursorPos(window, &mouseX, &mouseY);
-            if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-                rightMouseDown = true;
-            }
-            else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_RELEASE) {
-                rightMouseDown = false;
-            }
-
-            if(glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-                leftMouseDown = true;
-            }
-            else if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_RELEASE) {
-                leftMouseDown = false;
-            }
-
-            if (rightMouseDown) {
-                float deltaX = static_cast<float>(mouseX - lastMouseX);
-                float deltaY = static_cast<float>(mouseY - lastMouseY);
-                rotY += deltaX;
-                rotX += deltaY;
-            }
-
-            if (leftMouseDown) {
-                float deltaX = static_cast<float>(mouseX - lastMouseX);
-                float deltaY = static_cast<float>(mouseY - lastMouseY);
-                posX += deltaX;
-                posY -= deltaY;
-            }
-
-            // Define scale as static/global so it can be accessed in the callback
-            auto scroll_callback = [](GLFWwindow *window, double xoffset, double yoffset) {
-                if (scale)
-                {
-                    if (yoffset > 0)
-                        scale *= 1.1f;
-                    else
-                        scale /= 1.1f;
-                }
-            };
-            glfwSetScrollCallback(window, scroll_callback);
-
-            lastMouseX = mouseX;
-            lastMouseY = mouseY;
-        }
-
         cv::waitKey(40);
+
+        if (videoIsPlaying)
+        {
+            {
+                static auto lastAdvance = std::chrono::high_resolution_clock::now();
+
+                const double frameMs = 1000.0 / videoFPS;
+                auto nowFrame = std::chrono::high_resolution_clock::now();
+                double elapsedMs = std::chrono::duration<double, std::milli>(nowFrame - lastAdvance).count();
+
+                if (elapsedMs >= frameMs)
+                {
+                    lastAdvance = nowFrame;
+                    currentFrameIndex++;
+                    if (currentFrameIndex >= static_cast<int>(processedFrames.size()))
+                    {
+                        currentFrameIndex = static_cast<int>(processedFrames.size()) - 1;
+                        videoIsPlaying = false;
+                    }
+                }
+            }
+        }
     }
-    cap.release();
     cleanupShaderPrograms();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

@@ -35,7 +35,7 @@ target_include_directories(imgui_static PUBLIC ${CMAKE_SOURCE_DIR}/imgui ${CMAKE
 target_link_libraries(imgui_static PUBLIC glfw OpenGL::GL GLEW::GLEW)
 
 # Define the executable target and its source files.
-add_executable(${PROJECT_NAME} main.cpp gpu_transforms.cpp gpu_transforms.h)
+add_executable(${PROJECT_NAME} main.cpp gpu_transforms.cpp gpu_transforms.h tracking.cpp tracking.h)
 
 # Link the executable against the required OpenCV libraries and ImGui.
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS} OpenGL::GL GLEW::GLEW glfw imgui_static)

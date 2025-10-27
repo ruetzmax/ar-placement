@@ -5,31 +5,31 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include "gpu_transforms.h"
+#include "tracking.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <chrono>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 using namespace cv;
 
-std::vector<cv::Mat> dummyProcessVideo(std::vector<cv::Mat> video)
+std::vector<cv::Mat> trackCameraMotion(std::vector<cv::Mat> video, cv::Mat &cameraIntrinsics, cv::Mat &cameraDistortion, cv::Mat &rotations, cv::Mat &translations, std::vector<int> &frameIndices)
 {
-    std::vector<cv::Mat> frames;
-    frames.reserve(video.size());
-    for (const auto &f : video)
+    std::vector<cv::Mat> outputFrames;
+    trackCamera(video, outputFrames, frameIndices, cameraIntrinsics, cameraDistortion, rotations, translations, 20);
+    // Print frameIndices explicitly since std::ostream doesn't support printing std::vector<int> directly
+    std::cout << "frameIndices: [";
+    for (size_t i = 0; i < frameIndices.size(); ++i)
     {
-        if (f.empty())
-        {
-            frames.emplace_back();
-            continue;
-        }
-        cv::Mat gray, bgr;
-        cv::cvtColor(f, gray, cv::COLOR_BGR2GRAY);
-        cv::cvtColor(gray, bgr, cv::COLOR_GRAY2BGR);
-        frames.push_back(bgr);
+        if (i)
+            std::cout << ", ";
+        std::cout << frameIndices[i];
     }
-    return frames;
+    std::cout << "]" << std::endl;
+    return video;
 }
 
 std::vector<cv::Mat> readVideo(const char *filename, double &videoFPS)
@@ -104,7 +104,7 @@ int main()
     int screenWidth, screenHeight;
 
     double videoFPS;
-    std::vector<cv::Mat> unprocessedFrames = readVideo((videoPath + "vid.mp4").c_str(), videoFPS);
+    std::vector<cv::Mat> unprocessedFrames = readVideo((videoPath + "tracker3.mp4").c_str(), videoFPS);
     std::vector<cv::Mat> processedFrames = unprocessedFrames;
     int currentFrameIndex = 0;
     bool videoIsPlaying = false;
@@ -112,6 +112,9 @@ int main()
 
     screenWidth = processedFrames[0].cols;
     screenHeight = processedFrames[0].rows;
+
+    cv::Mat cameraIntrinsics, cameraDistortion, rotations, translations;
+    std::vector<int> frameIndices;
 
     // -- Setup Window and OpenGL --
     if (!glfwInit())
@@ -135,11 +138,11 @@ int main()
         1.0f, -1.0f, 1.0f, 0.0f,
         1.0f, 1.0f, 1.0f, 1.0f};
 
-    unsigned int VAO, VBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    unsigned int screenVAO, screenVBO;
+    glGenVertexArrays(1, &screenVAO);
+    glGenBuffers(1, &screenVBO);
+    glBindVertexArray(screenVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, screenVBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices,
                  GL_STATIC_DRAW);
 
@@ -162,6 +165,54 @@ int main()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+    // Setup cube
+    float cubeVertices[] = {
+        -1.0f, -1.0f, -1.0f, // triangle 1 : begin
+        -1.0f, -1.0f, 1.0f,
+        -1.0f, 1.0f, 1.0f, // triangle 1 : end
+        1.0f, 1.0f, -1.0f, // triangle 2 : begin
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, 1.0f, -1.0f, // triangle 2 : end
+        1.0f, -1.0f, 1.0f,
+        -1.0f, -1.0f, -1.0f,
+        1.0f, -1.0f, -1.0f,
+        1.0f, 1.0f, -1.0f,
+        1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, 1.0f, 1.0f,
+        -1.0f, 1.0f, -1.0f,
+        1.0f, -1.0f, 1.0f,
+        -1.0f, -1.0f, 1.0f,
+        -1.0f, -1.0f, -1.0f,
+        -1.0f, 1.0f, 1.0f,
+        -1.0f, -1.0f, 1.0f,
+        1.0f, -1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,
+        1.0f, -1.0f, -1.0f,
+        1.0f, 1.0f, -1.0f,
+        1.0f, -1.0f, -1.0f,
+        1.0f, 1.0f, 1.0f,
+        1.0f, -1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, -1.0f,
+        -1.0f, 1.0f, -1.0f,
+        1.0f, 1.0f, 1.0f,
+        -1.0f, 1.0f, -1.0f,
+        -1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f,
+        -1.0f, 1.0f, 1.0f,
+        1.0f, -1.0f, 1.0f};
+
+    unsigned int cubeVAO, cubeVBO;
+    glGenVertexArrays(1, &cubeVAO);
+    glGenBuffers(1, &cubeVBO);
+    glBindVertexArray(cubeVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
+    glEnableVertexAttribArray(0);
+
     // -- Setup GUI --
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -175,7 +226,7 @@ int main()
 
     while (!glfwWindowShouldClose(window))
     {
-        // time tracking
+        // TIME TRACKING
         auto now = std::chrono::high_resolution_clock::now();
         float deltaTime = std::chrono::duration<float>(now - lastFrameTime).count();
         fps = 1.0f / deltaTime;
@@ -195,8 +246,11 @@ int main()
             }
         }
 
+        // DRAW SCREEN
         glfwMakeContextCurrent(window);
         glClear(GL_COLOR_BUFFER_BIT);
+        glBindVertexArray(screenVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, screenVBO);
 
         Mat frame = processedFrames[currentFrameIndex].clone();
         if (frame.empty())
@@ -210,12 +264,35 @@ int main()
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, frame.cols, frame.rows,
                      0, GL_RGB, GL_UNSIGNED_BYTE, frame.data);
 
-        unsigned int shaderProgram = getShaderProgram();
-
-        glUseProgram(shaderProgram);
+        glUseProgram(screenShaderProgram);
 
         // render quad
         glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        // DRAW OBJECT
+        // check if current frame was tracked
+        auto it = std::find(frameIndices.begin(), frameIndices.end(), currentFrameIndex);
+        if (it != frameIndices.end())
+        {
+            // std::cout << "Drawing object for frame index: " << currentFrameIndex << std::endl;
+            int index = std::distance(frameIndices.begin(), it);
+            cv::Mat rotationVec = rotations.row(index);
+            cv::Mat translationVec = translations.row(index);
+            // cv::Mat rotationVec, translationVec;
+            // rotationVec = cv::Mat::zeros(1, 3, CV_32F);
+            // translationVec = cv::Mat::zeros(1, 3, CV_32F);
+
+            glBindVertexArray(cubeVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
+            glm::mat4 viewMatrix = getViewMatrix(rotationVec, translationVec);
+            glm::mat4 projectionMatrix = getProjectionMatrix(cameraIntrinsics);
+
+            glUseProgram(objectShaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_TRUE, &viewMatrix[0][0]);
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_TRUE, &projectionMatrix[0][0]);
+
+            glDrawArrays(GL_TRIANGLES, 0, 36);
+        }
 
         glfwPollEvents();
 
@@ -235,7 +312,7 @@ int main()
         if (ImGui::Button("Process Video"))
         {
             auto t0 = std::chrono::high_resolution_clock::now();
-            processedFrames = dummyProcessVideo(unprocessedFrames);
+            processedFrames = trackCameraMotion(unprocessedFrames, cameraIntrinsics, cameraDistortion, rotations, translations, frameIndices);
             auto t1 = std::chrono::high_resolution_clock::now();
             double elapsedMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
             processingTime = std::to_string(elapsedMs) + " ms";

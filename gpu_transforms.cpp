@@ -6,6 +6,7 @@
 #include <GLFW/glfw3.h>
 #include <opencv2/opencv.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 std::string screenVertexShader = R"(
@@ -45,58 +46,52 @@ std::string objectFragmentShader = R"(
 #version 330 core
 out vec4 FragColor ;
 void main () {
-FragColor = vec4 (1.0 , 0.5 , 0.2 , 1.0) ;
+FragColor = vec4 (0.0 , 0.0 , 1.0 , 1.0) ;
 }
 )";
 
 glm::mat4 getViewMatrix(const cv::Mat& rotationVec, const cv::Mat& translationVec)
 {
-    // cv::Mat rotationMat3;
-    // cv::Rodrigues(rotationVec, rotationMat3);
-    // rotationMat3.convertTo(rotationMat3, CV_64F);
+    cv::Mat R_cv;
+    cv::Rodrigues(rotationVec, R_cv);
+    
+    cv::Mat view_cv = cv::Mat::eye(4,4,CV_64F);
+    for (int r=0; r<3; r++)
+        for (int c=0; c<3; c++)
+            view_cv.at<double>(r,c) = R_cv.at<double>(r,c);
+    
+    for (int r=0; r<3; r++)
+        view_cv.at<double>(r,3) = translationVec.at<double>(0, r);
 
-    // cv::Mat rotationMat = cv::Mat::eye(4, 4, CV_64F);
-    // for (int i = 0; i < 3; ++i)
-    // {
-    //     for (int j = 0; j < 3; ++j)
-    //     {
-    //         rotationMat.at<double>(i, j) = rotationMat3.at<double>(i, j);
-    //     }
-    // }
+    // convert to OpenGL coord system
+    cv::Mat S = cv::Mat::eye(4,4,CV_64F);
+    S.at<double>(1,1) = -1.0;
+    S.at<double>(2,2) = -1.0;
+    view_cv = S * view_cv;
 
-    // rotationMat = rotationMat.inv();
+    // convert row major to column major
+    glm::mat4 view_gl;
+    for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+            view_gl[c][r] = static_cast<float>(view_cv.at<double>(r, c));
+        }
+    }
 
-
-    // cv::Mat translationMat = cv::Mat::eye(4, 4, CV_64F);
-    // for (int i = 0; i < 3; ++i)
-    // {
-    //     translationMat.at<double>(i, 3) = -translationVec.at<double>(0, i);
-    // }
-
-
-    // cv::Mat flip = (cv::Mat_<double>(4,4) <<
-    //  1,  0,  0,  0,
-    //  0, -1,  0,  0,
-    //  0,  0, -1,  0,
-    //  0,  0,  0,  1);
-
-    // return rotationMat * translationMat;
-    glm::mat4 view = glm::mat4(1.0f);
-    // Apply translation
-    view = glm::translate(view, glm::vec3(-translationVec.at<float>(0, 0), translationVec.at<float>(0, 1), translationVec.at<float>(0, 2)));
-    view = glm::rotate(view, -rotationVec.at<float>(0, 0), glm::vec3(1.0f, 0.0f, 0.0f));
-    view = glm::rotate(view, -rotationVec.at<float>(0, 1), glm::vec3(0.0f, -1.0f, 0.0f));
-    view = glm::rotate(view, -rotationVec.at<float>(0, 2), glm::vec3(0.0f, 0.0f, -1.0f));
-    return view;
+    return view_gl;
 }
 
 glm::mat4 getProjectionMatrix(cv::Mat cameraIntrinsics){
-    float fov = 45.0f;           // Field of view in degrees
-    float aspect = 640.0f/480.0f; // Width / Height
+    float fx = cameraIntrinsics.at<double>(0, 0);
+    float fy = cameraIntrinsics.at<double>(1, 1);
+    float cx = cameraIntrinsics.at<double>(0, 2);
+    float cy = cameraIntrinsics.at<double>(1, 2);
+
+    float fov = 2.0f * atan(cy / fy);
+    float aspect = cx / cy;
     float near = 0.1f;
     float far = 100.0f;
 
-    glm::mat4 projection = glm::perspective(glm::radians(fov), aspect, near, far);
+    glm::mat4 projection = glm::perspective(fov, aspect, near, far);
     return projection;
 }
 

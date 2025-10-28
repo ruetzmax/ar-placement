@@ -13,23 +13,15 @@
 #include <chrono>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 using namespace cv;
 
 std::vector<cv::Mat> trackCameraMotion(std::vector<cv::Mat> video, cv::Mat &cameraIntrinsics, cv::Mat &cameraDistortion, cv::Mat &rotations, cv::Mat &translations, std::vector<int> &frameIndices)
 {
     std::vector<cv::Mat> outputFrames;
-    trackCamera(video, outputFrames, frameIndices, cameraIntrinsics, cameraDistortion, rotations, translations, 20);
-    // Print frameIndices explicitly since std::ostream doesn't support printing std::vector<int> directly
-    std::cout << "frameIndices: [";
-    for (size_t i = 0; i < frameIndices.size(); ++i)
-    {
-        if (i)
-            std::cout << ", ";
-        std::cout << frameIndices[i];
-    }
-    std::cout << "]" << std::endl;
-    return video;
+    trackCamera(video, outputFrames, frameIndices, cameraIntrinsics, cameraDistortion, rotations, translations, 0);
+    return outputFrames;
 }
 
 std::vector<cv::Mat> readVideo(const char *filename, double &videoFPS)
@@ -128,6 +120,9 @@ int main()
     glfwMakeContextCurrent(window);
     glewInit();
     initShaderPrograms();
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
 
     float vertices[] = {
         -1.0f, 1.0f, 0.0f, 1.0f,
@@ -248,7 +243,10 @@ int main()
 
         // DRAW SCREEN
         glfwMakeContextCurrent(window);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glDisable(GL_DEPTH_TEST);
+
         glBindVertexArray(screenVAO);
         glBindBuffer(GL_ARRAY_BUFFER, screenVBO);
 
@@ -270,26 +268,68 @@ int main()
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         // DRAW OBJECT
-        // check if current frame was tracked
-        auto it = std::find(frameIndices.begin(), frameIndices.end(), currentFrameIndex);
-        if (it != frameIndices.end())
-        {
-            // std::cout << "Drawing object for frame index: " << currentFrameIndex << std::endl;
-            int index = std::distance(frameIndices.begin(), it);
-            cv::Mat rotationVec = rotations.row(index);
-            cv::Mat translationVec = translations.row(index);
-            // cv::Mat rotationVec, translationVec;
-            // rotationVec = cv::Mat::zeros(1, 3, CV_32F);
-            // translationVec = cv::Mat::zeros(1, 3, CV_32F);
 
+        if (!frameIndices.empty())
+        {
+
+            glEnable(GL_DEPTH_TEST);
+            glClear(GL_DEPTH_BUFFER_BIT);
+
+            cv::Mat rotationVec, translationVec;
+
+            // check if current frame was tracked
+            // if so, use the actual tracked r+t
+            auto it = std::find(frameIndices.begin(), frameIndices.end(), currentFrameIndex);
+            if (it != frameIndices.end())
+            {
+                int index = std::distance(frameIndices.begin(), it);
+                rotationVec = rotations.row(index);
+                translationVec = translations.row(index);
+            }
+            // if not, interpolate linearly between previous and next tracked frame (if they exist)
+            else
+            {
+                auto nextIt = std::find_if(frameIndices.begin(), frameIndices.end(), [&](int idx) { return idx > currentFrameIndex; });
+                auto prevIt = (nextIt != frameIndices.begin()) ? std::prev(nextIt) : frameIndices.end();
+
+                if (prevIt != frameIndices.end() && nextIt != frameIndices.end())
+                {
+                    int prevIndex = std::distance(frameIndices.begin(), prevIt);
+                    int nextIndex = std::distance(frameIndices.begin(), nextIt);
+
+                    float alpha = float(currentFrameIndex - *prevIt) / float(*nextIt - *prevIt);
+
+                    cv::Mat prevRotVec = rotations.row(prevIndex);
+                    cv::Mat nextRotVec = rotations.row(nextIndex);
+                    cv::Mat prevTransVec = translations.row(prevIndex);
+                    cv::Mat nextTransVec = translations.row(nextIndex);
+
+                    rotationVec = (1.0f - alpha) * prevRotVec + alpha * nextRotVec;
+                    translationVec = (1.0f - alpha) * prevTransVec + alpha * nextTransVec;
+                }
+                // for first or last frames, use the closest tracked frame
+                else if (prevIt != frameIndices.end())
+                {
+                    int prevIndex = std::distance(frameIndices.begin(), prevIt);
+                    rotationVec = rotations.row(prevIndex);
+                    translationVec = translations.row(prevIndex);
+                }
+                else if (nextIt != frameIndices.end())
+                {
+                    int nextIndex = std::distance(frameIndices.begin(), nextIt);
+                    rotationVec = rotations.row(nextIndex);
+                    translationVec = translations.row(nextIndex);
+                }
+            }
+
+            glUseProgram(objectShaderProgram);
             glBindVertexArray(cubeVAO);
             glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
             glm::mat4 viewMatrix = getViewMatrix(rotationVec, translationVec);
             glm::mat4 projectionMatrix = getProjectionMatrix(cameraIntrinsics);
 
-            glUseProgram(objectShaderProgram);
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_TRUE, &viewMatrix[0][0]);
-            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_TRUE, &projectionMatrix[0][0]);
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
+            glUniformMatrix4fv(glGetUniformLocation(objectShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
 
             glDrawArrays(GL_TRIANGLES, 0, 36);
         }
@@ -309,7 +349,7 @@ int main()
         {
             videoIsPlaying = !videoIsPlaying;
         }
-        if (ImGui::Button("Process Video"))
+        if (ImGui::Button("Track and Undistort"))
         {
             auto t0 = std::chrono::high_resolution_clock::now();
             processedFrames = trackCameraMotion(unprocessedFrames, cameraIntrinsics, cameraDistortion, rotations, translations, frameIndices);

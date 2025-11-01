@@ -172,10 +172,118 @@ void trackCamera(const std::vector<cv::Mat> &inputFrames, std::vector<cv::Mat> &
     cv::Mat cameraIntrinsics, cameraDistortion, rotations, translations;
     cv::calibrateCamera(combinedObjectPoints, combinedImagePoints, inputFrames[0].size(), cameraIntrinsics, cameraDistortion, rotations, translations);
 
-    // expand rotations and translations to cover all frames
+    // Compute dense depth maps using stereo estimation from consecutive frames
+    std::vector<cv::Mat> depths;
+    for (size_t i = 0; i < trackedFrameIndices.size(); i++)
+    {
+        std::cout << "Computing depth for frame " << i << " / " << trackedFrameIndices.size() - 1 << "\r" << std::flush;
+        
+        cv::Mat depthMap;
+        
+        if (i < trackedFrameIndices.size() - 1) {
+            // Use this frame and next frame as stereo pair
+            auto frame1 = inputFrames[trackedFrameIndices[i]].clone();
+            auto frame2 = inputFrames[trackedFrameIndices[i + 1]].clone();
+            
+            cv::Mat rotation1, translation1, rotation2, translation2;
+            rotations.row(i).convertTo(rotation1, CV_64F);
+            translations.row(i).convertTo(translation1, CV_64F);
+            rotations.row(i + 1).convertTo(rotation2, CV_64F);
+            translations.row(i + 1).convertTo(translation2, CV_64F);
+            
+            rotation1 = rotation1.reshape(1, 3);
+            translation1 = translation1.reshape(1, 3);
+            rotation2 = rotation2.reshape(1, 3);
+            translation2 = translation2.reshape(1, 3);
+            
+            cv::Mat R1_mat, R2_mat;
+            cv::Rodrigues(rotation1, R1_mat);
+            cv::Rodrigues(rotation2, R2_mat);
+            
+            // Compute relative transformation between camera positions
+            // R_rel = R2 * R1^T
+            cv::Mat R_rel = R2_mat * R1_mat.t();
+            
+            // t_rel = t2 - R_rel * t1
+            cv::Mat t_rel = translation2 - R_rel * translation1;
+            
+            // Check if there's enough baseline (camera movement)
+            double baseline = cv::norm(t_rel);
+            if (baseline < 0.01) {
+                // Not enough motion, create empty depth map
+                depthMap = cv::Mat::zeros(frame1.size(), CV_8UC3);
+            } else {
+                // Convert back to rotation vector
+                cv::Mat R_rel_vec;
+                cv::Rodrigues(R_rel, R_rel_vec);
+                
+                // Stereo rectification
+                cv::Mat R1, R2, P1, P2, Q;
+                cv::stereoRectify(cameraIntrinsics, cameraDistortion,
+                                  cameraIntrinsics, cameraDistortion,
+                                  frame1.size(), R_rel_vec, t_rel,
+                                  R1, R2, P1, P2, Q,
+                                  cv::CALIB_ZERO_DISPARITY, 0);
+                
+                cv::Mat map1x, map1y, map2x, map2y;
+                cv::initUndistortRectifyMap(cameraIntrinsics, cameraDistortion, R1, P1, 
+                                            frame1.size(), CV_32FC1, map1x, map1y);
+                cv::initUndistortRectifyMap(cameraIntrinsics, cameraDistortion, R2, P2, 
+                                            frame2.size(), CV_32FC1, map2x, map2y);
+                
+                cv::Mat rect1, rect2;
+                cv::remap(frame1, rect1, map1x, map1y, cv::INTER_LINEAR);
+                cv::remap(frame2, rect2, map2x, map2y, cv::INTER_LINEAR);
+                
+                cv::Mat gray1, gray2;
+                cv::cvtColor(rect1, gray1, cv::COLOR_BGR2GRAY);
+                cv::cvtColor(rect2, gray2, cv::COLOR_BGR2GRAY);
+                
+                // Compute disparity with better parameters for dense depth
+                int numDisparities = 16 * 5; // Must be divisible by 16
+                int blockSize = 15;
+                auto stereoBM = cv::StereoBM::create(numDisparities, blockSize);
+                stereoBM->setPreFilterCap(31);
+                stereoBM->setMinDisparity(0);
+                stereoBM->setTextureThreshold(10);
+                stereoBM->setUniquenessRatio(15);
+                stereoBM->setSpeckleWindowSize(100);
+                stereoBM->setSpeckleRange(32);
+                
+                cv::Mat disparity;
+                stereoBM->compute(gray1, gray2, disparity);
+                
+                // Convert disparity to depth and normalize for visualization
+                cv::Mat disparity8U;
+                double minVal, maxVal;
+                cv::minMaxLoc(disparity, &minVal, &maxVal);
+                if (maxVal > minVal) {
+                    disparity.convertTo(disparity8U, CV_8U, 255.0 / (maxVal - minVal), -minVal * 255.0 / (maxVal - minVal));
+                } else {
+                    disparity8U = cv::Mat::zeros(disparity.size(), CV_8U);
+                }
+                
+                // Apply colormap for visualization
+                cv::applyColorMap(disparity8U, depthMap, cv::COLORMAP_JET);
+            }
+        } else {
+            // Last frame, reuse previous depth
+            if (!depths.empty()) {
+                depthMap = depths.back().clone();
+            } else {
+                depthMap = cv::Mat::zeros(inputFrames[trackedFrameIndices[i]].size(), CV_8UC3);
+            }
+        }
+        
+        depths.push_back(depthMap);
+    }
+
+    // expand rotations, translations and depths to cover all frames
+    std::cout << "Expanding pose and depth information to all frames." << std::endl;
     std::vector<cv::Mat> allRotations(inputFrames.size() - adjustedStart);
     std::vector<cv::Mat> allTranslations(inputFrames.size() - adjustedStart);
-    
+    std::vector<cv::Mat> allDepths(inputFrames.size() - adjustedStart);
+
     for (int frameIndex = adjustedStart; frameIndex < inputFrames.size(); frameIndex++)
     {
         int localIndex = frameIndex - adjustedStart;
@@ -184,6 +292,13 @@ void trackCamera(const std::vector<cv::Mat> &inputFrames, std::vector<cv::Mat> &
         if (calibrationIndex >= 0) {
             allRotations[localIndex] = rotations.row(calibrationIndex).clone();
             allTranslations[localIndex] = translations.row(calibrationIndex).clone();
+            
+            if (calibrationIndex < depths.size()) {
+                allDepths[localIndex] = depths[calibrationIndex].clone();
+            } else if (calibrationIndex > 0 && !depths.empty()) {
+                // for the last frame, reuse the last available depth map
+                allDepths[localIndex] = depths.back().clone();
+            }
         }
     }
 
@@ -241,7 +356,8 @@ void trackCamera(const std::vector<cv::Mat> &inputFrames, std::vector<cv::Mat> &
         cv::flip(output, output, 0);
         cv::cvtColor(output, output, cv::COLOR_RGB2BGR);
 
-        outputFrames.push_back(output.clone());
+        // outputFrames.push_back(output.clone());
+        outputFrames.push_back(allDepths[localIndex].clone());
     }
 
     processingTime = std::to_string(totalProcessingTime.count()) + " ms";
